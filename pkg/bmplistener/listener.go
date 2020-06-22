@@ -7,6 +7,7 @@ import (
 
 	"github.com/golang/glog"
 	"github.com/sbezverk/gobmp/pkg/bmp"
+	"github.com/sbezverk/routemonitor/pkg/classifier"
 )
 
 // Listener defines methods to manage BMP Server
@@ -19,7 +20,7 @@ type listener struct {
 	sourcePort int
 	incoming   net.Listener
 	stop       chan struct{}
-	classifier func(bmpMsg bmp.Message)
+	classifier classifier.NLRI
 }
 
 func (l *listener) Start() {
@@ -84,7 +85,7 @@ func (l *listener) peerWorker(client net.Conn) {
 }
 
 // NewBMPListener instantiates a new instance of BMP listener
-func NewBMPListener(sPort int, classifier func(bmp.Message)) (Listener, error) {
+func NewBMPListener(sPort int, c classifier.NLRI) (Listener, error) {
 	incoming, err := net.Listen("tcp", fmt.Sprintf(":%d", sPort))
 	if err != nil {
 		glog.Errorf("fail to setup listener on port %d with error: %+v", sPort, err)
@@ -94,7 +95,7 @@ func NewBMPListener(sPort int, classifier func(bmp.Message)) (Listener, error) {
 		stop:       make(chan struct{}),
 		sourcePort: sPort,
 		incoming:   incoming,
-		classifier: classifier,
+		classifier: c,
 	}
 
 	return &l, nil

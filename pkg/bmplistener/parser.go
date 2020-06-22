@@ -49,6 +49,6 @@ func (l *listener) parsingWorker(b []byte) {
 		}
 		perPerHeaderLen = 0
 		p += (int(ch.MessageLength) - bmp.CommonHeaderLength)
-		go l.classifier(bmpMsg)
+		go l.classifier.Classify(bmpMsg)
 	}
 }
