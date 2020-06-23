@@ -11,6 +11,7 @@ import (
 
 	"github.com/golang/glog"
 	"github.com/sbezverk/routemonitor/pkg/bmplistener"
+	"github.com/sbezverk/routemonitor/pkg/classifier"
 )
 
 var (
@@ -52,7 +53,8 @@ func main() {
 	go func() {
 		glog.Info(http.ListenAndServe(fmt.Sprintf(":%d", perfPort), nil))
 	}()
-	l, err := bmplistener.NewBMPListener(srcPort, nil)
+
+	l, err := bmplistener.NewBMPListener(srcPort, classifier.NewClassifierNLRI())
 	if err != nil {
 		glog.Errorf("failed to start listener with error: %+v", err)
 		os.Exit(1)

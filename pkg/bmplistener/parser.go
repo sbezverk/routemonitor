@@ -3,6 +3,7 @@ package bmplistener
 import (
 	"github.com/golang/glog"
 	"github.com/sbezverk/gobmp/pkg/bmp"
+	"github.com/sbezverk/gobmp/pkg/tools"
 )
 
 // parser dispatches workers upon request received from the channel
@@ -22,6 +23,7 @@ func (l *listener) parsingWorker(b []byte) {
 	perPerHeaderLen := 0
 	var bmpMsg bmp.Message
 	// Loop through all found Common Headers in the slice and process them
+	glog.Infof("Complete BPM message raw: %s", tools.MessageHex(b))
 	for p := 0; p < len(b); {
 		bmpMsg.PeerHeader = nil
 		bmpMsg.Payload = nil
@@ -46,9 +48,9 @@ func (l *listener) parsingWorker(b []byte) {
 			}
 			bmpMsg.Payload = rm
 			p += perPerHeaderLen
+			l.classifier.Classify(bmpMsg)
 		}
 		perPerHeaderLen = 0
 		p += (int(ch.MessageLength) - bmp.CommonHeaderLength)
-		go l.classifier.Classify(bmpMsg)
 	}
 }
