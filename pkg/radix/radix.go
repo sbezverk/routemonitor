@@ -3,13 +3,16 @@ package radix
 import (
 	"fmt"
 	"net"
+	"strings"
 
+	"github.com/golang/glog"
 	"github.com/sbezverk/gobmp/pkg/bgp"
 )
 
 // Tree is the interface to manage tree related functions
 type Tree interface {
 	Add([]byte, int, string, *bgp.BaseAttributes)
+	Check([]byte, int) bool
 	GetAll() []string
 }
 
@@ -28,15 +31,112 @@ type node struct {
 	prefix *prefix
 }
 
-type tree struct {
-	root *node
+type msg struct {
+	op     operation
+	value  []byte
+	length int
+	peer   string
+	attr   *bgp.BaseAttributes
 }
 
-func (n *tree) Add(b []byte, l int, peer string, attr *bgp.BaseAttributes) {
-	if n.root == nil {
-		n.root = &node{}
+type tree struct {
+	root     *node
+	treeCh   chan msg
+	resultCh chan interface{}
+}
+
+type operation int
+
+const (
+	addOp operation = iota
+	delOp
+	checkOp
+)
+
+// treeManager is function sceduling operations on the tree, it is used to prevent any concurrency issues
+func (t *tree) treeManager() {
+	for {
+		select {
+		case msg := <-t.treeCh:
+			switch msg.op {
+			case addOp:
+				t.add(msg.value, msg.length, msg.peer, msg.attr)
+			case delOp:
+			case checkOp:
+				t.check(msg.value, msg.length)
+			}
+		default:
+		}
 	}
-	cnode := n.root
+}
+
+// Add is externally available methor to add a route into the tree
+func (t *tree) Add(b []byte, l int, peer string, attr *bgp.BaseAttributes) {
+	t.treeCh <- msg{
+		op:     addOp,
+		value:  b,
+		length: l,
+		peer:   peer,
+		attr:   attr,
+	}
+}
+
+// Check verifies if specified prefix stored in the tree
+func (t *tree) Check(b []byte, l int) bool {
+	t.treeCh <- msg{
+		op:     checkOp,
+		value:  b,
+		length: l,
+	}
+	r := <-t.resultCh
+	_, ok := r.(bool)
+	if !ok {
+		return false
+	}
+
+	return r.(bool)
+}
+
+func (t *tree) check(b []byte, l int) {
+	//	if n.root == nil {
+	//		n.root = &node{}
+	//	}
+	glog.Infof("Checking for prefix: %+v length: %d", b, l)
+	cnode := t.root
+	v := NewNodeValue()
+	v.LoadNodeValue(b)
+	i := 0
+	for d := range v.BitRanger() {
+		if d {
+			if cnode.right == nil {
+				t.resultCh <- false
+				return
+			}
+			cnode = cnode.right
+		} else {
+			if cnode.left == nil {
+				t.resultCh <- false
+				return
+			}
+			cnode = cnode.left
+		}
+		if i >= l {
+			break
+		}
+		i++
+	}
+	if cnode.prefix == nil {
+		t.resultCh <- false
+		return
+	}
+	t.resultCh <- true
+}
+
+func (t *tree) add(b []byte, l int, peer string, attr *bgp.BaseAttributes) {
+	//	if n.root == nil {
+	//		n.root = &node{}
+	//	}
+	cnode := t.root
 	v := NewNodeValue()
 	v.LoadNodeValue(b)
 	i := 0
@@ -65,7 +165,18 @@ func (n *tree) Add(b []byte, l int, peer string, attr *bgp.BaseAttributes) {
 			attrs:  make(map[string]*bgp.BaseAttributes),
 		}
 	}
-	cnode.prefix.attrs[peer] = attr
+	oattr, ok := cnode.prefix.attrs[peer]
+	if !ok {
+		cnode.prefix.attrs[peer] = attr
+	} else {
+		// Anpther advertisement from the same peer for this prefix
+		// compare BaseAttributes hash
+		if strings.Compare(oattr.BaseAttrHash, attr.BaseAttrHash) != 0 {
+			// Changes in attributes detected, saving moe recent attributes
+			cnode.prefix.attrs[peer] = attr
+			// If change in attributes is tracking, here the signal should be raised to notify about the change
+		}
+	}
 }
 
 func setBit(b []byte, n int) error {
@@ -99,7 +210,7 @@ func copyBits(d, s []byte, n int) {
 	}
 }
 
-func (n *tree) processNode(cnode *node, onode *node, up bool, bit int, c chan *prefix, p []byte) (*node, bool, int) {
+func (t *tree) processNode(cnode *node, onode *node, up bool, bit int, c chan *prefix, p []byte) (*node, bool, int) {
 	if cnode == nil {
 		close(c)
 		return nil, up, bit
@@ -127,37 +238,37 @@ func (n *tree) processNode(cnode *node, onode *node, up bool, bit int, c chan *p
 			setBit(p, bit)
 			up = false
 			bit++
-			return n.processNode(cnode.right, cnode, up, bit, c, p)
+			return t.processNode(cnode.right, cnode, up, bit, c, p)
 		}
 		// No instantiated children nodes, going back up
 		up = true
 		clearBit(p, bit)
 		bit--
-		return n.processNode(cnode.parent, cnode, up, bit, c, p)
+		return t.processNode(cnode.parent, cnode, up, bit, c, p)
 	}
 	if cnode.left != nil {
 		up = false
 		bit++
-		return n.processNode(cnode.left, cnode, up, bit, c, p)
+		return t.processNode(cnode.left, cnode, up, bit, c, p)
 	}
 	if cnode.right != nil {
 		setBit(p, bit)
 		up = false
 		bit++
-		return n.processNode(cnode.right, cnode, up, bit, c, p)
+		return t.processNode(cnode.right, cnode, up, bit, c, p)
 	}
 	// No instantiated children nodes, going back up
 	up = true
 	clearBit(p, bit)
 	bit--
-	return n.processNode(cnode.parent, cnode, up, bit, c, p)
+	return t.processNode(cnode.parent, cnode, up, bit, c, p)
 }
 
-func (n *tree) GetAll() []string {
+func (t *tree) GetAll() []string {
 	routes := make([]string, 0)
 	c := make(chan *prefix)
 	p := make([]byte, 4)
-	go n.processNode(n.root, n.root.parent, false, 0, c, p)
+	go t.processNode(t.root, t.root.parent, false, 0, c, p)
 	for p := range c {
 		pr := make([]byte, 4)
 		copy(pr, p.value)
@@ -169,11 +280,17 @@ func (n *tree) GetAll() []string {
 
 // NewTree returns a new instance of the tree
 func NewTree() Tree {
-	return &tree{
+	t := &tree{
+		treeCh:   make(chan msg),
+		resultCh: make(chan interface{}),
 		root: &node{
 			parent: nil,
 		},
 	}
+	// Starting Tree Manager
+	go t.treeManager()
+
+	return t
 }
 
 // NodeValue defines interface with methods to operate with Node Value
