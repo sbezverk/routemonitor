@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/golang/glog"
 	"github.com/sbezverk/gobmp/pkg/base"
 	"github.com/sbezverk/gobmp/pkg/bgp"
 	"github.com/sbezverk/gobmp/pkg/bmp"
@@ -47,6 +46,7 @@ func (n *nlri) Check(t RouteType, b []byte, l int) bool {
 		return n.uipv4.Check(b, l)
 	case UnicastIPv6:
 	case VPNv4:
+		return n.vpnv4.Check(b, l)
 	case VPNv6:
 	}
 
@@ -94,9 +94,8 @@ func (n *nlri) Classify(msg bmp.Message) {
 }
 
 func (n *nlri) processBGPNLRI(peer string, attr *bgp.BaseAttributes, routes []base.Route) {
-	// fmt.Printf("Update carries rfc4271 NLRI\n")
-	// fmt.Printf("Peer: %s Attributes: %+v Routes: %+v", peer, attr, routes)
 	for _, r := range routes {
+		fmt.Printf("><SB> Route: %+v", r)
 		n.uipv4.Add(r.Prefix, int(r.Length), peer, attr)
 	}
 }
@@ -111,33 +110,11 @@ func (n *nlri) processMPReach(peer string, attr *bgp.BaseAttributes, mpreach bgp
 		for _, r := range unicast.NLRI {
 			n.uipv4.Add(r.Prefix, int(r.Length), peer, attr)
 		}
-		all := n.vpnv4.GetAll()
-		glog.Infof("All MP Reach Unicast: %+v", all)
-		if len(all) != 0 {
-			p, m, _ := net.ParseCIDR(all[0])
-			l, _ := m.Mask.Size()
-			if !n.vpnv4.Check(net.IP(p).To4(), l) {
-				glog.Errorf("Check for existing prefix failed")
-			} else {
-				glog.Infof("Check for existing prefix succeeded")
-			}
-		}
 	}
 	if l3vpn, err := mpreach.GetNLRIL3VPN(); err == nil {
 		// fmt.Printf("Peer: %s Attributes: %+v L3VPN Routes: %+v", peer, attr, l3vpn.NLRI)
 		for _, r := range l3vpn.NLRI {
 			n.vpnv4.Add(r.Prefix, int(r.Length), peer, attr)
-		}
-		all := n.vpnv4.GetAll()
-		glog.Infof("All MP Reach VPNv4: %+v", all)
-		if len(all) != 0 {
-			p, m, _ := net.ParseCIDR(all[0])
-			l, _ := m.Mask.Size()
-			if !n.vpnv4.Check(net.IP(p).To4(), l) {
-				glog.Errorf("Check for existing prefix failed")
-			} else {
-				glog.Infof("Check for existing prefix succeeded")
-			}
 		}
 	}
 }
