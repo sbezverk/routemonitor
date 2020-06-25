@@ -23,7 +23,7 @@ func (l *listener) parsingWorker(b []byte) {
 	perPerHeaderLen := 0
 	var bmpMsg bmp.Message
 	// Loop through all found Common Headers in the slice and process them
-	glog.Infof("Complete BPM message raw: %s", tools.MessageHex(b))
+	glog.V(5).Infof("Complete BPM message raw: %s", tools.MessageHex(b))
 	for p := 0; p < len(b); {
 		bmpMsg.PeerHeader = nil
 		bmpMsg.Payload = nil
@@ -49,6 +49,8 @@ func (l *listener) parsingWorker(b []byte) {
 			bmpMsg.Payload = rm
 			p += perPerHeaderLen
 			go l.classifier.Classify(bmpMsg)
+		default:
+			glog.V(5).Infof("Non Route Monitor message.")
 		}
 		perPerHeaderLen = 0
 		p += (int(ch.MessageLength) - bmp.CommonHeaderLength)

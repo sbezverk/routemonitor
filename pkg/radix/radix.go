@@ -5,7 +5,6 @@ import (
 	"net"
 	"strings"
 
-	"github.com/golang/glog"
 	"github.com/sbezverk/gobmp/pkg/bgp"
 )
 
@@ -98,10 +97,6 @@ func (t *tree) Check(b []byte, l int) bool {
 }
 
 func (t *tree) check(b []byte, l int) {
-	//	if n.root == nil {
-	//		n.root = &node{}
-	//	}
-	glog.Infof("Checking for prefix: %+v length: %d", b, l)
 	cnode := t.root
 	v := NewNodeValue()
 	v.LoadNodeValue(b)
@@ -133,9 +128,6 @@ func (t *tree) check(b []byte, l int) {
 }
 
 func (t *tree) add(b []byte, l int, peer string, attr *bgp.BaseAttributes) {
-	//	if n.root == nil {
-	//		n.root = &node{}
-	//	}
 	cnode := t.root
 	v := NewNodeValue()
 	v.LoadNodeValue(b)
@@ -200,13 +192,9 @@ func clearBit(b []byte, n int) {
 
 func copyBits(d, s []byte, n int) {
 	copy(d, s[:len(d)])
-	i := n / 8
-	if i != 0 {
-		i--
-	}
-	for m := 0; m < (n % 8); m++ {
+	for m := 0; m < len(d)*8-n; m++ {
 		mask := ^(1 << m)
-		d[i] &= byte(mask)
+		d[len(d)-1] &= byte(mask)
 	}
 }
 

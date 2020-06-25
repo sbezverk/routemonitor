@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 
+	"github.com/golang/glog"
 	"github.com/sbezverk/gobmp/pkg/base"
 	"github.com/sbezverk/gobmp/pkg/bgp"
 	"github.com/sbezverk/gobmp/pkg/bmp"
@@ -45,9 +46,11 @@ func (n *nlri) Check(t RouteType, b []byte, l int) bool {
 	case UnicastIPv4:
 		return n.uipv4.Check(b, l)
 	case UnicastIPv6:
+		return n.uipv6.Check(b, l)
 	case VPNv4:
 		return n.vpnv4.Check(b, l)
 	case VPNv6:
+		return n.vpnv6.Check(b, l)
 	}
 
 	return false
@@ -78,7 +81,7 @@ func (n *nlri) Classify(msg bmp.Message) {
 		return
 	}
 	u := m.Update
-
+	glog.V(5).Infof("Processing BMP from peer: %s peer hash: %s", peer, msg.PeerHeader.GetPeerHash())
 	if len(u.NLRI) != 0 {
 		n.processBGPNLRI(msg.PeerHeader.GetPeerHash(), u.BaseAttributes, u.NLRI)
 	}
@@ -94,33 +97,40 @@ func (n *nlri) Classify(msg bmp.Message) {
 }
 
 func (n *nlri) processBGPNLRI(peer string, attr *bgp.BaseAttributes, routes []base.Route) {
+	glog.V(5).Info("Message with bgp rfc4271 nlri")
 	for _, r := range routes {
-		fmt.Printf("><SB> Route: %+v", r)
+		glog.Infof("><SB> BGP NLRI Prefix: %+v length: %d", r.Prefix, r.Length)
 		n.uipv4.Add(r.Prefix, int(r.Length), peer, attr)
 	}
 }
 
 func (n *nlri) processBGPWithdraw(peer string, attr *bgp.BaseAttributes, routes []base.Route) {
+	glog.V(5).Info("Message with bgp rfc4271 withdraw")
 	// fmt.Printf("Update carries rfc4271 Withdraw routes\n")
 	// fmt.Printf("Peer: %s Attributes: %+vRoutes: %+v", peer, attr, routes)
 }
 func (n *nlri) processMPReach(peer string, attr *bgp.BaseAttributes, mpreach bgp.MPNLRI) {
+	glog.V(5).Infof("Message with bgp mp_reach nlri, afi/safi code: %d", mpreach.GetAFISAFIType())
 	if unicast, err := mpreach.GetNLRIUnicast(); err == nil {
+		glog.V(5).Infof("Message with bgp mp_reach nlri unicast")
 		// fmt.Printf("Peer: %s Attributes: %+v Unicast Routes: %+v", peer, attr, unicast.NLRI)
 		for _, r := range unicast.NLRI {
+			glog.Infof("><SB> Unicast Prefix: %+v", r.Prefix)
 			n.uipv4.Add(r.Prefix, int(r.Length), peer, attr)
 		}
 	}
+
 	if l3vpn, err := mpreach.GetNLRIL3VPN(); err == nil {
+		glog.V(5).Info("Message with bgp mp_reach nlri vpnv4")
 		// fmt.Printf("Peer: %s Attributes: %+v L3VPN Routes: %+v", peer, attr, l3vpn.NLRI)
 		for _, r := range l3vpn.NLRI {
+			glog.Infof("><SB> VPN Prefix: %+v", r.Prefix)
 			n.vpnv4.Add(r.Prefix, int(r.Length), peer, attr)
 		}
 	}
 }
 
 func (n *nlri) processMPUnReach(peer string, attr *bgp.BaseAttributes, mpunreach bgp.MPNLRI) {
-
 	if _, err := mpunreach.GetNLRIUnicast(); err == nil {
 		// fmt.Printf("Peer: %s Attributes: %+v Unicast Routes: %+v", peer, attr, unicast.NLRI)
 	}
