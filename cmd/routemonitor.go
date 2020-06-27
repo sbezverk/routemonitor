@@ -128,6 +128,7 @@ func fakeBMPGenerator(c classifier.NLRI, stopCh <-chan struct{}) {
 					glog.Infof("Check for existing prefix succeeded")
 				}
 			}
+			glog.Infof("All routes of type %+v: %+v", msgs[i].routeType, c.GetAll(msgs[i].routeType))
 			i++
 			if i >= len(msgs) {
 				i = 0

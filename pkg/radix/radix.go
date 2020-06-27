@@ -11,6 +11,7 @@ import (
 // Tree is the interface to manage tree related functions
 type Tree interface {
 	Add([]byte, int, string, *bgp.BaseAttributes)
+	Delete([]byte, int, string) error
 	Check([]byte, int) bool
 	GetAll() []string
 }
@@ -61,6 +62,7 @@ func (t *tree) treeManager() {
 			case addOp:
 				t.add(msg.value, msg.length, msg.peer, msg.attr)
 			case delOp:
+				t.delete(msg.value, msg.length, msg.peer)
 			case checkOp:
 				t.check(msg.value, msg.length)
 			}
@@ -94,6 +96,23 @@ func (t *tree) Check(b []byte, l int) bool {
 	}
 
 	return r.(bool)
+}
+
+// Check verifies if specified prefix stored in the tree
+func (t *tree) Delete(b []byte, l int, peer string) error {
+	t.treeCh <- msg{
+		op:     delOp,
+		value:  b,
+		length: l,
+		peer:   peer,
+	}
+	r := <-t.resultCh
+	_, ok := r.(error)
+	if !ok {
+		return fmt.Errorf("Delete return unexpected type")
+	}
+
+	return r.(error)
 }
 
 func (t *tree) check(b []byte, l int) {
@@ -169,6 +188,49 @@ func (t *tree) add(b []byte, l int, peer string, attr *bgp.BaseAttributes) {
 			// If change in attributes is tracking, here the signal should be raised to notify about the change
 		}
 	}
+}
+
+func (t *tree) delete(b []byte, l int, s string) {
+	if t.root == nil {
+		t.root = &node{}
+	}
+	cnode := t.root
+	v := NewNodeValue()
+	v.LoadNodeValue(b)
+	i := 0
+	for d := range v.BitRanger() {
+		if d {
+			if cnode.right == nil {
+				t.resultCh <- fmt.Errorf("not found")
+				return
+			}
+			cnode = cnode.right
+		} else {
+			if cnode.left == nil {
+				t.resultCh <- fmt.Errorf("not found")
+				return
+			}
+			cnode = cnode.left
+		}
+		if i >= l {
+			break
+		}
+		i++
+	}
+	if cnode.prefix == nil {
+		t.resultCh <- fmt.Errorf("not found")
+		return
+	}
+	if _, ok := cnode.prefix.attrs[s]; !ok {
+		t.resultCh <- fmt.Errorf("not found")
+		return
+	}
+	delete(cnode.prefix.attrs, s)
+	if len(cnode.prefix.attrs) == 0 {
+		cnode.prefix = nil
+	}
+	t.resultCh <- nil
+	return
 }
 
 func setBit(b []byte, n int) error {

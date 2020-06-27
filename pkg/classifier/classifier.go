@@ -29,6 +29,7 @@ const (
 type NLRI interface {
 	Classify(bmp.Message)
 	Check(RouteType, []byte, int) bool
+	Delete(RouteType, []byte, int, string) error
 	GetAll(RouteType) []string
 }
 
@@ -54,6 +55,21 @@ func (n *nlri) Check(t RouteType, b []byte, l int) bool {
 	}
 
 	return false
+}
+
+func (n *nlri) Delete(t RouteType, b []byte, l int, peer string) error {
+	switch t {
+	case UnicastIPv4:
+		return n.uipv4.Delete(b, l, peer)
+	case UnicastIPv6:
+		return n.uipv6.Delete(b, l, peer)
+	case VPNv4:
+		return n.vpnv4.Delete(b, l, peer)
+	case VPNv6:
+		return n.vpnv6.Delete(b, l, peer)
+	}
+
+	return fmt.Errorf("non supported route type")
 }
 
 func (n *nlri) Classify(msg bmp.Message) {
@@ -99,7 +115,7 @@ func (n *nlri) Classify(msg bmp.Message) {
 func (n *nlri) processBGPNLRI(peer string, attr *bgp.BaseAttributes, routes []base.Route) {
 	glog.V(5).Info("Message with bgp rfc4271 nlri")
 	for _, r := range routes {
-		glog.Infof("><SB> BGP NLRI Prefix: %+v length: %d", r.Prefix, r.Length)
+		// glog.Infof("><SB> BGP NLRI Prefix: %+v length: %d", r.Prefix, r.Length)
 		n.uipv4.Add(r.Prefix, int(r.Length), peer, attr)
 	}
 }
@@ -115,7 +131,7 @@ func (n *nlri) processMPReach(peer string, attr *bgp.BaseAttributes, mpreach bgp
 		glog.V(5).Infof("Message with bgp mp_reach nlri unicast")
 		// fmt.Printf("Peer: %s Attributes: %+v Unicast Routes: %+v", peer, attr, unicast.NLRI)
 		for _, r := range unicast.NLRI {
-			glog.Infof("><SB> Unicast Prefix: %+v", r.Prefix)
+			// glog.Infof("><SB> Unicast Prefix: %+v", r.Prefix)
 			n.uipv4.Add(r.Prefix, int(r.Length), peer, attr)
 		}
 	}
@@ -124,7 +140,7 @@ func (n *nlri) processMPReach(peer string, attr *bgp.BaseAttributes, mpreach bgp
 		glog.V(5).Info("Message with bgp mp_reach nlri vpnv4")
 		// fmt.Printf("Peer: %s Attributes: %+v L3VPN Routes: %+v", peer, attr, l3vpn.NLRI)
 		for _, r := range l3vpn.NLRI {
-			glog.Infof("><SB> VPN Prefix: %+v", r.Prefix)
+			// glog.Infof("><SB> VPN Prefix: %+v", r.Prefix)
 			n.vpnv4.Add(r.Prefix, int(r.Length), peer, attr)
 		}
 	}
