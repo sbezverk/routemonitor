@@ -14,12 +14,17 @@ type Tree interface {
 	Delete([]byte, int, string) error
 	Check([]byte, int) bool
 	GetAll() []string
+	Monitor(string, []byte, int, chan struct{}) error
+	Unmonitor(string, []byte, int, chan struct{})
 }
 
 type prefix struct {
 	value  []byte
 	length int
-	attrs  map[string]*bgp.BaseAttributes
+	// Prefix's per advertising peer attribute map
+	attrs map[string]*bgp.BaseAttributes
+	// Map of channels of the monitoring sessions keyd by the client ID
+	monitor map[string]chan struct{}
 }
 
 var _ Tree = &tree{}
@@ -32,11 +37,13 @@ type node struct {
 }
 
 type msg struct {
-	op     operation
-	value  []byte
-	length int
-	peer   string
-	attr   *bgp.BaseAttributes
+	op      operation
+	value   []byte
+	length  int
+	peer    string
+	attr    *bgp.BaseAttributes
+	id      string
+	monitor chan struct{}
 }
 
 type tree struct {
@@ -51,6 +58,8 @@ const (
 	addOp operation = iota
 	delOp
 	checkOp
+	monitorOp
+	unmonitorOp
 )
 
 // treeManager is function sceduling operations on the tree, it is used to prevent any concurrency issues
@@ -65,6 +74,10 @@ func (t *tree) treeManager() {
 				t.delete(msg.value, msg.length, msg.peer)
 			case checkOp:
 				t.check(msg.value, msg.length)
+			case monitorOp:
+				t.monitor(msg.id, msg.value, msg.length, msg.monitor)
+			case unmonitorOp:
+				t.unmonitor(msg.id, msg.value, msg.length, msg.monitor)
 			}
 		default:
 		}
@@ -115,6 +128,38 @@ func (t *tree) Delete(b []byte, l int, peer string) error {
 	return r.(error)
 }
 
+// Monitor adds a channel per client's id to prefix's monitor map
+func (t *tree) Monitor(id string, b []byte, l int, c chan struct{}) error {
+	t.treeCh <- msg{
+		op:      monitorOp,
+		value:   b,
+		length:  l,
+		id:      id,
+		monitor: c,
+	}
+	r := <-t.resultCh
+	_, ok := r.(error)
+	if !ok {
+		return fmt.Errorf("Delete return unexpected type")
+	}
+
+	return r.(error)
+}
+
+// Unmonitor removes a channel per client's id to prefix's monitor map
+func (t *tree) Unmonitor(id string, b []byte, l int, c chan struct{}) {
+	t.treeCh <- msg{
+		op:      monitorOp,
+		value:   b,
+		length:  l,
+		id:      id,
+		monitor: c,
+	}
+	<-t.resultCh
+
+	return
+}
+
 func (t *tree) check(b []byte, l int) {
 	cnode := t.root
 	v := NewNodeValue()
@@ -146,6 +191,72 @@ func (t *tree) check(b []byte, l int) {
 	t.resultCh <- true
 }
 
+func (t *tree) monitor(id string, b []byte, l int, c chan struct{}) {
+	cnode := t.root
+	v := NewNodeValue()
+	v.LoadNodeValue(b)
+	i := 0
+	for d := range v.BitRanger() {
+		if d {
+			if cnode.right == nil {
+				t.resultCh <- false
+				return
+			}
+			cnode = cnode.right
+		} else {
+			if cnode.left == nil {
+				t.resultCh <- false
+				return
+			}
+			cnode = cnode.left
+		}
+		if i >= l {
+			break
+		}
+		i++
+	}
+	if cnode.prefix == nil {
+		t.resultCh <- false
+		return
+	}
+	cnode.prefix.monitor[id] = c
+	t.resultCh <- true
+}
+
+func (t *tree) unmonitor(id string, b []byte, l int, c chan struct{}) {
+	cnode := t.root
+	v := NewNodeValue()
+	v.LoadNodeValue(b)
+	i := 0
+	for d := range v.BitRanger() {
+		if d {
+			if cnode.right == nil {
+				t.resultCh <- false
+				return
+			}
+			cnode = cnode.right
+		} else {
+			if cnode.left == nil {
+				t.resultCh <- false
+				return
+			}
+			cnode = cnode.left
+		}
+		if i >= l {
+			break
+		}
+		i++
+	}
+	if cnode.prefix == nil {
+		t.resultCh <- false
+		return
+	}
+	if _, ok := cnode.prefix.monitor[id]; ok {
+		delete(cnode.prefix.monitor, id)
+	}
+	t.resultCh <- true
+}
+
 func (t *tree) add(b []byte, l int, peer string, attr *bgp.BaseAttributes) {
 	cnode := t.root
 	v := NewNodeValue()
@@ -172,8 +283,9 @@ func (t *tree) add(b []byte, l int, peer string, attr *bgp.BaseAttributes) {
 	}
 	if cnode.prefix == nil {
 		cnode.prefix = &prefix{
-			length: l,
-			attrs:  make(map[string]*bgp.BaseAttributes),
+			length:  l,
+			attrs:   make(map[string]*bgp.BaseAttributes),
+			monitor: make(map[string]chan struct{}),
 		}
 	}
 	oattr, ok := cnode.prefix.attrs[peer]
@@ -227,6 +339,12 @@ func (t *tree) delete(b []byte, l int, s string) {
 	}
 	delete(cnode.prefix.attrs, s)
 	if len(cnode.prefix.attrs) == 0 {
+		// Once last prefix's advertised peer is gone, prefix is deleted
+		// from the radix. Informing any monitoring sessions, that the prefix
+		// is no longer exists by closing each monitoring sessions' channel.
+		for _, c := range cnode.prefix.monitor {
+			close(c)
+		}
 		cnode.prefix = nil
 	}
 	t.resultCh <- nil

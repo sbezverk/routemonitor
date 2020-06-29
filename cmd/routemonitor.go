@@ -14,6 +14,7 @@ import (
 	"github.com/golang/glog"
 	"github.com/sbezverk/routemonitor/pkg/bmplistener"
 	"github.com/sbezverk/routemonitor/pkg/classifier"
+	"github.com/sbezverk/routemonitor/pkg/server"
 )
 
 var (
@@ -62,9 +63,18 @@ func main() {
 		os.Exit(1)
 	}
 	l.Start()
+	// Initialize gRPC server
+	conn, err := net.Listen("tcp", ":55000")
+	if err != nil {
+		glog.Errorf("failed to setup listener with with error: %+v", err)
+		os.Exit(1)
+	}
+	srv := server.NewRouteMonitor(conn, c)
+	srv.Start()
 	stopCh := setupSignalHandler()
-	go fakeBMPGenerator(c, stopCh)
+	// go fakeBMPGenerator(c, stopCh)
 	<-stopCh
+	srv.Stop()
 	l.Stop()
 	os.Exit(0)
 }

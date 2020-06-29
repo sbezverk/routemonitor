@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+message Prefix {
+    bytes address = 1;
+    uint32 mask_length = 2;
+}
+
+message PrefixList {
+    repeated Prefix prefix_list = 1;
+}
+// MonitorRequest carries a map of prefixes by the type, supported types are:
+// Unicast IPv4, Unicast IPv6, VPVv4, VPVv6
+message MonitorRequest {
+    map <int32,PrefixList> prefix_list = 1;
+}
+// MonitorResponse carries a map of prefixes by the event,
+// List of prefixes changed, list of prefixes deleted.
+message MonitorResponse {
+    map <int32, PrefixList> prefix_list = 1; 
+}
+
+// RouteMonitor lists rpc services supported by the route monitoring api
+service RouteMonitor {
+  rpc Monitor(MonitorRequest) returns (stream MonitorResponse);
+}
