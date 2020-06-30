@@ -32,7 +32,7 @@ type NLRI interface {
 	Delete(RouteType, []byte, int, string) error
 	GetAll(RouteType) []string
 	Monitor(RouteType, string, []byte, int, chan struct{}) error
-	Unmonitor(RouteType, string, []byte, int, chan struct{})
+	Unmonitor(RouteType, string, []byte, int)
 }
 
 var _ NLRI = &nlri{}
@@ -74,19 +74,19 @@ func (n *nlri) Monitor(t RouteType, id string, b []byte, l int, c chan struct{})
 	return fmt.Errorf("not supported table")
 }
 
-func (n *nlri) Unmonitor(t RouteType, id string, b []byte, l int, c chan struct{}) {
+func (n *nlri) Unmonitor(t RouteType, id string, b []byte, l int) {
 	switch t {
 	case UnicastIPv4:
-		n.uipv4.Unmonitor(id, b, l, c)
+		n.uipv4.Unmonitor(id, b, l)
 		return
 	case UnicastIPv6:
-		n.uipv6.Unmonitor(id, b, l, c)
+		n.uipv6.Unmonitor(id, b, l)
 		return
 	case VPNv4:
-		n.vpnv4.Unmonitor(id, b, l, c)
+		n.vpnv4.Unmonitor(id, b, l)
 		return
 	case VPNv6:
-		n.vpnv6.Unmonitor(id, b, l, c)
+		n.vpnv6.Unmonitor(id, b, l)
 		return
 	}
 

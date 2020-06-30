@@ -15,7 +15,7 @@ type Tree interface {
 	Check([]byte, int) bool
 	GetAll() []string
 	Monitor(string, []byte, int, chan struct{}) error
-	Unmonitor(string, []byte, int, chan struct{})
+	Unmonitor(string, []byte, int)
 }
 
 type prefix struct {
@@ -147,13 +147,12 @@ func (t *tree) Monitor(id string, b []byte, l int, c chan struct{}) error {
 }
 
 // Unmonitor removes a channel per client's id to prefix's monitor map
-func (t *tree) Unmonitor(id string, b []byte, l int, c chan struct{}) {
+func (t *tree) Unmonitor(id string, b []byte, l int) {
 	t.treeCh <- msg{
-		op:      monitorOp,
-		value:   b,
-		length:  l,
-		id:      id,
-		monitor: c,
+		op:     unmonitorOp,
+		value:  b,
+		length: l,
+		id:     id,
 	}
 	<-t.resultCh
 

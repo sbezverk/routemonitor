@@ -5,8 +5,8 @@ import (
 
 	"github.com/golang/glog"
 	"github.com/google/uuid"
-	pbapi "github.com/sbezverk/routemonitor/pkg/api"
 	"github.com/sbezverk/routemonitor/pkg/classifier"
+	pbapi "github.com/sbezverk/routemonitor/pkg/routemonitor"
 	"google.golang.org/grpc"
 )
 
@@ -36,44 +36,69 @@ func (r *routeMonitor) Stop() {
 
 func (r *routeMonitor) Monitor(req *pbapi.MonitorRequest, srv pbapi.RouteMonitor_MonitorServer) error {
 	// Generating unique id for the client request
-	id = uuid.New()
+	id := uuid.New()
+	unmonitor := make([]func(), 0)
+	prefixes := make(map[int]*struct {
+		t  classifier.RouteType
+		id string
+		p  []byte
+		l  int
+	})
+	channels := make(map[int]chan struct{})
+	i := 0
 	for t, routes := range req.PrefixList {
-		for _, r := range routes.PrefixList {
-
+		for _, p := range routes.PrefixList {
+			channels[i] = make(chan struct{})
+			if err := r.c.Monitor(classifier.RouteType(t), id.String(), p.Address, int(p.MaskLength), channels[i]); err != nil {
+				// In case of error, Unmonitor all previously succesful Monitor calls, and return error to the client.
+				for _, f := range unmonitor {
+					f()
+				}
+				return err
+			}
+			prefixes[i] = &struct {
+				t  classifier.RouteType
+				id string
+				p  []byte
+				l  int
+			}{
+				t:  classifier.RouteType(t),
+				id: id.String(),
+				p:  p.Address,
+				l:  int(p.MaskLength),
+			}
+			unmonitor = append(unmonitor, func() {
+				r.c.Unmonitor(classifier.RouteType(t), id.String(), p.Address, int(p.MaskLength))
+			})
 		}
 	}
-	// cm, err := c.Recv()
-	// if err != nil {
-	// 	return err
-	// }
-	// if cm == nil {
-	// 	return fmt.Errorf("client info is nil")
-	// }
-	// glog.V(5).Infof("request from client with id %s to monitor.", string(cm.Id))
-	// if m := g.clientMgmt.Get(string(cm.Id)); m == nil {
-	// 	g.clientMgmt.Add(string(cm.Id))
-	// 	glog.V(5).Infof("adding client with id %s to the store.", string(cm.Id))
-	// } else {
-	// 	// TODO add better handling of such condition
-	// 	glog.Warningf("duplicate monitor request, client with id: %s already in the store", string(cm.Id))
-	// 	return err
-	// }
-	// for {
-	// 	_, err := c.Recv()
-	// 	if err != nil {
-	// 		// Error indicates that the client is no longer functional, sending command to
-	// 		// the clients manager to remove the client and exit
-	// 		glog.V(5).Infof("client with id %s is no longer alive, error: %+v, deleting it from the store.", string(cm.Id), err)
-	// 		c := g.clientMgmt.Get(string(cm.Id))
-	// 		for _, f := range c.GetRouteCleanup() {
-	// 			if err := f(); err != nil {
-	// 				glog.Errorf("route cleanup encountered error: %+v", err)
-	// 			}
-	// 		}
-	// 		g.clientMgmt.Delete(string(cm.Id))
-	// 		return err
-	// 	}
-	// }
+
+	for e, c := range channels {
+		select {
+		// TODO msg should carry, prefix Update/Dalete, prefix and its length
+		case <-c:
+			// TODO, when prefix gets updated/deleted, send a message
+			m := prefixes[e]
+			if err := srv.Send(&pbapi.MonitorResponse{
+				PrefixList: map[int32]*pbapi.PrefixList{
+					int32(m.t): {
+						PrefixList: []*pbapi.Prefix{
+							{
+								Address:    m.p,
+								MaskLength: uint32(m.l),
+							},
+						},
+					},
+				},
+			}); err != nil {
+				for _, f := range unmonitor {
+					f()
+				}
+				return err
+			}
+		}
+	}
+
 	return nil
 }
 
